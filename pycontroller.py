@@ -2,9 +2,22 @@ import signal
 import socket
 import pygame
 import time
+import serial
+from array import array
 
 pygame.init()
+width = 324
+height = 324
+size = [width, height]
+screen = pygame.display.set_mode(size)
+black_pix = 0, 0, 0
+screen.fill(black_pix)
+pygame.display.flip()
+
 def main():
+    uart = serial.Serial ("COM8", 115200, timeout=15)
+    while(1):
+        get_uart_frame(uart, width, height, 1, 8)
     clock = pygame.time.Clock()
     print("Starting py controller")
     broadcast_port = 60000
@@ -129,6 +142,187 @@ def config_interrupts():
       signal.signal(signal.SIGQUIT, exit_handler)
    except:
       print("Couldn't lock SIGQUIT")
+
+def get_uart_frame(uart: serial.Serial, x_res, y_res, cpp, bpc):
+    pixels = x_res*y_res
+    bits_per_pixel = cpp*bpc
+
+    start_string = b'frame_start\r\n'
+    end_string = b'frame_done\r\n'
+    uart.flushInput()
+    try:
+    # search_data = uart.read_until(expected=start_string, size=len(start_string))
+    # frame_data = uart.read_until(expected=end_string)
+        # print("found", search_data)
+        # found_frame = 0
+        # found_string = 0
+        # search_array = []
+        # while(found_string == 0):
+        #     data = uart.read()
+        #     search_array.append(data)
+        #     if(len(search_string) == len(search_array)):
+        #         if(search_string == search_array):
+        #             found_string = 1
+        #         else:
+        #             del search_string[0]
+        #     else:
+        #         pass # waiting for more data
+        discard_data = None
+        while(not(discard_data == start_string)):
+            discard_data = uart.readline()
+        frame_word = None
+        frame_data = []
+        while(not(frame_word == end_string)):
+            if(not(frame_word == None)):
+                data_string = frame_word.decode()
+                data = data_string[0:-2]
+                frame_data.append(data)
+            frame_word = uart.readline()
+        #image_data = frame_data[len(start_string)-2:-len(end_string)]
+        print(len(frame_data))
+
+    #print(image_data)
+    # if(type(frame_data) == bytes):
+    #     image = bytearray(frame_data)
+    #     image_array = array('I', frame_data)
+    #     print("Found array")
+        process_image_bytes(x_res, y_res, cpp, bpc, frame_data)
+    # else:
+    #     print("Found other type...")
+    #     print(type(frame_data))
+    #print(frame_data)
+    except Exception as e:
+        print(e)
+        #print("error getting uart frame")
+
+def process_image_bytes(x_res, y_res, cpp, bpc, frame_data):
+    #print(frame_data)
+    #print(len(frame_data))
+    image_bytes_list = image_to_bytes(x_res, y_res, frame_data)
+    image_bytes = bytes(image_bytes_list)
+    new_image = pygame.image.frombuffer(image_bytes, size, 'RGB')
+    screen.blit(new_image, (0,0))
+    pygame.display.flip()
+
+# def image_to_bytes(x_res, y_res, frame_data):
+#     image_bytes_list = []
+#     y = y_res
+#     x = x_res
+#     # while(y):
+#     #     x = x_res
+#     #     while(x):
+#     #         image_bytes_list.append(0xff)
+#     #         image_bytes_list.append(0xff)
+#     #         image_bytes_list.append(0xff)
+#     #         x = x - 1
+#     #     y = y - 1
+#     for data in frame_data:
+#         data_word = int(data)
+#         shifter = 0xffffffff
+#         while(shifter):
+#             if(data_word & 0x1):
+#                 # bit is 1 - write in 
+#                 #image_bytes_list.append(0xffffff)
+#                 image_bytes_list.append(0xff)
+#                 image_bytes_list.append(0xff)
+#                 image_bytes_list.append(0xff)
+#             else:
+#                 #image_bytes_list.append(0x000000)
+#                 image_bytes_list.append(0x00)
+#                 image_bytes_list.append(0x00)
+#                 image_bytes_list.append(0x00)
+#             data_word = (data_word >> 1)
+#             shifter = shifter >> 1
+#             x = x - 1
+#             if(x == 0):
+#                 x = x_res
+#                 y = y - 1
+#                 if(y == 0):
+#                     return image_bytes_list
+#     return image_bytes_list
+
+def image_to_bytes(x_res, y_res, frame_data):
+    image_bytes_list = []
+    y = y_res
+    x = x_res
+    # while(y):
+    #     x = x_res
+    #     while(x):
+    #         image_bytes_list.append(0xff)
+    #         image_bytes_list.append(0xff)
+    #         image_bytes_list.append(0xff)
+    #         x = x - 1
+    #     y = y - 1
+    # pixel = 0
+    # shifter = 0
+    # bit_counter = 0
+    # masked_data = 0
+    for data in frame_data:
+        data_word = int(data)
+        image_data = data_word & 0x000000ff
+        image_bytes_list.append(image_data)
+        image_bytes_list.append(image_data)
+        image_bytes_list.append(image_data)
+        data_word = data_word >> 8
+        image_data = data_word & 0x000000ff
+        image_bytes_list.append(image_data)
+        image_bytes_list.append(image_data)
+        image_bytes_list.append(image_data)
+        data_word = data_word >> 8
+        image_data = data_word & 0x000000ff
+        image_bytes_list.append(image_data)
+        image_bytes_list.append(image_data)
+        image_bytes_list.append(image_data)
+        data_word = data_word >> 8
+        image_data = data_word & 0x000000ff
+        image_bytes_list.append(image_data)
+        image_bytes_list.append(image_data)
+        image_bytes_list.append(image_data)
+
+    return image_bytes_list
+    # while(pixel < len(frame_data)):
+    #     if(shifter == 0):
+    #         data_word = int(frame_data[pixel])
+    #         shifter = 0xffffffff
+    #         pixel = pixel + 1
+    #     masked_data = (data_word & 0xff)
+    #     # masked_data = masked_data | (data_bit << bit_counter)
+    #     data_word = (data_word >> 8)
+    #     shifter = shifter >> 8
+    #     image_bytes_list.append(masked_data)
+    #     image_bytes_list.append(masked_data)
+    #     image_bytes_list.append(masked_data)
+    #     x = x - 1
+    #     if(x == 0):
+    #         x = x_res
+    #         y = y - 1
+    #         if(y == 0):
+    #             return image_bytes_list
+    #     # if(bit_counter == 6):
+    #     #     bit_counter = 0
+    #     #     masked_data = masked_data << 2
+    #     #     image_bytes_list.append(masked_data)
+    #     #     image_bytes_list.append(masked_data)
+    #     #     image_bytes_list.append(masked_data)
+    #     #     masked_data = 0
+            
+    #     # while(shifter):
+    #         # masked_data = data_word & 0xff
+            
+    #         # if(data_word & 0x1):
+    #         #     # bit is 1 - write in 
+    #         #     #image_bytes_list.append(0xffffff)
+    #         #     image_bytes_list.append(0xff)
+    #         #     image_bytes_list.append(0xff)
+    #         #     image_bytes_list.append(0xff)
+    #         # else:
+    #         #     #image_bytes_list.append(0x000000)
+    #         #     image_bytes_list.append(0x00)
+    #         #     image_bytes_list.append(0x00)
+    #         #     image_bytes_list.append(0x00)
+    #         # data_word = (data_word >> 6)
+    #         # shifter = shifter >> 6
+    return image_bytes_list
 
 
 def exit_handler(signum, frame):
