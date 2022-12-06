@@ -11,11 +11,13 @@ height = 324
 bpc = 8
 cpp = 1
 size = [width, height]
-screen = pygame.display.set_mode(size)
+screen = pygame.display.set_mode(size=size)
 black_pix = 0, 0, 0
 screen.fill(black_pix)
 pygame.display.flip()
-image_array = array('B',(0 for _ in range(width*height)))
+# image_array = array('B',(0 for _ in range(width*height)))
+image_array = bytearray(width*height)
+image = bytearray(width*height*3)
 image_packet_size = width*height*bpc*cpp
 
 uart_image_test = 0
@@ -86,7 +88,7 @@ def main():
                 test_packet = "pycontroller:"+str(rand)
                 #print("No controller, sending dummy packet")
                 send_udp_packet(addr, broadcast_port+rand,test_packet)
-                time.sleep(0.5)
+                # time.sleep(0.5)
             else:
                 for controller in joysticks.values():
                     joystick = controller
@@ -118,7 +120,7 @@ def main():
                     print("disconnected")
             else:
                 process_packet_image(ret_image, width, height, cpp, bpc)
-            clock.tick(30)
+            # clock.tick(30)
 
 def send_broadcast_packet(packet_port, packet_data):
     udp_tx_sock = socket.socket (socket.AF_INET, socket.SOCK_DGRAM)
@@ -161,8 +163,9 @@ def receive_image_packet(packet_ip, packet_port, packet_length):
     udp_rx_sock.bind(('',packet_port))
     x_res = 324
     y_res = 324
+    lines_per_packet = 4
     bytes_per_line_number = 4
-    packet_size = x_res + bytes_per_line_number
+    packet_size = 4*(x_res + bytes_per_line_number)
     global image_array
     image_data = []
     found_start = 0
@@ -171,51 +174,37 @@ def receive_image_packet(packet_ip, packet_port, packet_length):
     try:
         while(found_start == 0):
             udp_packet_data = udp_rx_sock.recvfrom(packet_size)
-            raw_data = udp_packet_data[0]
-            decoded_data = list(raw_data)
-            counter = 0
+            raw_data = bytearray(udp_packet_data[0])
             index = 0
-            shifter = 0
-            while(counter < bytes_per_line_number):
-                index = index | (decoded_data[counter] << shifter)
-                shifter = shifter + 8
-                counter = counter + 1
+            for x in range(bytes_per_line_number):
+                index = index | (raw_data[x] << x*8)
             if(index == 0):
                 found_start = 1
-            counter = 0
-            while(counter < bytes_per_line_number):
-                del decoded_data[0]
-                counter = counter + 1
-        x_counter = 0
-        while(x_counter < x_res):
-            image_array[x_res*index+x_counter] = decoded_data[x_counter]
-            x_counter = x_counter + 1
+        for y in range(lines_per_packet):
+            start = (index+y) * x_res
+            end = ((index+y) * x_res) + x_res
+            packet_start = y*(bytes_per_line_number+x_res) + bytes_per_line_number
+            packet_end = y*(bytes_per_line_number+x_res) + bytes_per_line_number + x_res
+            image_array[start:end] = raw_data[packet_start:packet_end]
         last_index = index
         while(found_end == 0):
             udp_packet_data = udp_rx_sock.recvfrom(packet_size)
-            raw_data = udp_packet_data[0]
-            decoded_data = list(raw_data)
-            counter = 0
+            raw_data = bytearray(udp_packet_data[0])
             index = 0
-            shifter = 0
-            while(counter < bytes_per_line_number):
-                index = index | (decoded_data[counter] << shifter)
-                shifter = shifter + 8
-                counter = counter + 1
+            for x in range(bytes_per_line_number):
+                index = index | (raw_data[x] << x*8)
             if(index < last_index):
                 print("found index rollover")
                 found_end = 1
             last_index = index
-            if(index == 323):
+            if(index >= (y_res - 1 - lines_per_packet)):
                 found_end = 1
-            counter = 0
-            while(counter < bytes_per_line_number):
-                del decoded_data[0]
-                counter = counter + 1
-            x_counter = 0
-            while(x_counter < x_res):
-                image_array[x_res*index+x_counter] = decoded_data[x_counter]
-                x_counter = x_counter + 1
+            for y in range(lines_per_packet):
+                start = (index+y) * x_res
+                end = ((index+y) * x_res) + x_res
+                packet_start = y*(bytes_per_line_number+x_res) + bytes_per_line_number
+                packet_end = y*(bytes_per_line_number+x_res) + bytes_per_line_number + x_res
+                image_array[start:end] = raw_data[packet_start:packet_end]
         print("done receiving image packet")
     except Exception as error:
         print(error)
@@ -246,9 +235,13 @@ def config_interrupts():
 
 def process_packet_image(image_packet, x_res, y_res, cpp, bpc):
     try:
-        image_bytes_list = image_array_to_bytes(x_res, y_res, image_packet)
-        image_bytes = bytes(image_bytes_list)
-        new_image = pygame.image.frombuffer(image_bytes, size, 'RGB')
+        global image
+        image_array_to_bytes(x_res, y_res, image_packet)
+        # image_bytes_list = image_array_to_bytes(x_res, y_res, image_packet)
+        # image_bytes = bytes(image_bytes_list)
+        new_image = pygame.image.frombuffer(image, size, 'RGB')
+        # new_image = pygame.image.frombuffer(image_bytes, size, 'RGB')
+        # new_image = pygame.image.frombuffer(image_packet, size, "P")
         screen.blit(new_image, (0,0))
         pygame.display.flip()
     except Exception as error:
@@ -386,7 +379,8 @@ def uart_image_array_to_bytes(x_res, y_res, frame_data):
     return image_bytes_list
 
 def image_array_to_bytes(x_res, y_res, frame_data):
-    image_bytes_list = []
+    # image_bytes_list = []
+    global image
     y = y_res
     x = x_res
     bytes_per_word = 1
@@ -402,20 +396,25 @@ def image_array_to_bytes(x_res, y_res, frame_data):
     # shifter = 0
     # bit_counter = 0
     # masked_data = 0
-    y_counter = 0
-    x_counter = 0
-    index = 0
-    while(y_counter < y_res):
-        x_counter = 0
-        while(x_counter < x_res):
-            image_bytes_list.append(int(frame_data[index]))
-            image_bytes_list.append(int(frame_data[index]))
-            image_bytes_list.append(int(frame_data[index]))
-            x_counter = x_counter + 1
-            index = index + 1
-        y_counter = y_counter + 1
+    for y in range(y_res):
+        for x in range(x_res):
+            image[y*x_res*3+x*3+0] = frame_data[y*x_res+x]
+            image[y*x_res*3+x*3+1] = frame_data[y*x_res+x]
+            image[y*x_res*3+x*3+2] = frame_data[y*x_res+x]
+    # y_counter = 0
+    # x_counter = 0
+    # index = 0
+    # while(y_counter < y_res):
+    #     x_counter = 0
+    #     while(x_counter < x_res):
+    #         image_bytes_list.append(int(frame_data[index]))
+    #         image_bytes_list.append(int(frame_data[index]))
+    #         image_bytes_list.append(int(frame_data[index]))
+    #         x_counter = x_counter + 1
+    #         index = index + 1
+    #     y_counter = y_counter + 1
 
-    return image_bytes_list
+    # return image_bytes_list
 
 def image_to_bytes(x_res, y_res, frame_data):
     image_bytes_list = []
